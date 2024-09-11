@@ -1,0 +1,161 @@
+---
+- name: get host ssh public key
+  ansible.builtin.command: "ssh-keyscan -Ht ecdsa {{ ansible_ssh_host }}"
+  delegate_to: localhost
+  register: keyscan_raw
+  delay: 5
+  retries: 30
+  until: keyscan_raw.stdout | length | int > 0
+
+- name: ensure /root/.ssh/known_hosts exists
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: "{{ item.state }}"
+    mode: "{{ item.mode }}"
+    owner: root
+    group: root
+  loop:
+    - path: /root
+      state: directory
+      mode: 0o700
+    - path: /root/.ssh
+      state: directory
+      mode: 0o700
+    - path: /root/.ssh/known_hosts
+      state: touch
+      mode: 0o600
+  become: true
+  delegate_to: localhost
+  run_once: true
+
+- name: add host ssh public key to known_hosts
+  ansible.builtin.known_hosts:
+    host: "{{ ansible_ssh_host }}"
+    key: "{{ keyscan_raw.stdout }}"
+    state: present
+  delegate_to: localhost
+
+- name: wait for ssh
+  ansible.builtin.wait_for_connection:
+    delay: 3
+
+- name: set root user ssh key(s)
+  ansible.posix.authorized_key:
+    user: root
+    state: present
+    key: "{{ proxmox_root_ssh_public_key }}"
+    exclusive: true
+  become: true
+  when: proxmox_root_ssh_public_key is defined
+  tags:
+    - proxmox_authorized_keys
+
+- name: get checksums
+  ansible.builtin.uri:
+    # url: https://cloud-images.ubuntu.com/jammy/current/SHA256SUMS
+    url: https://cloud-images.ubuntu.com/minimal/daily/jammy/current/SHA256SUMS
+    return_content: true
+  register: sha256sums
+  # failed_when: "'jammy-server-cloudimg-amd64.img' not in sha256sums.content"
+  failed_when: "'jammy-minimal-cloudimg-amd64.img' not in sha256sums.content"
+  run_once: true
+  delegate_to: localhost
+
+- ansible.builtin.set_fact:
+    checksum: "{{ item }}"
+  loop: "{{ sha256sums.content.split('\n') }}"
+    # 'jammy-server-cloudimg-amd64.img' in item
+  when: >
+    'jammy-minimal-cloudimg-amd64.img' in item
+    and not checksum is defined
+  run_once: true
+  delegate_to: localhost
+
+- name: download cloudimg
+  ansible.builtin.get_url:
+    # url: http://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+    url: https://cloud-images.ubuntu.com/minimal/daily/jammy/current/jammy-minimal-cloudimg-amd64.img
+    # dest: /root/jammy-server-cloudimg-amd64.img
+    dest: /root/jammy-minimal-cloudimg-amd64.img
+    checksum: "sha256:{{ checksum.split(' ')[0] }}"
+    owner: root
+    group: root
+    mode: 0o644
+  run_once: true
+  delegate_to: "{{ proxmox_api_host }}"
+
+- name: create template vm
+  community.general.proxmox_kvm:
+    api_user: "{{ proxmox_api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    api_host: "{{ proxmox_api_host }}"
+    node: "{{ proxmox_node }}"
+    name: ubuntu2204
+    vmid: 100
+    state: present
+    template: true
+  delegate_to: localhost
+  run_once: true
+
+- name: import cloudimg
+  community.general.proxmox_disk:
+    api_user: "{{ proxmox_api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    api_host: "{{ proxmox_api_host }}"
+    name: ubuntu2204
+    vmid: 100
+    disk: scsi0
+    backup: true
+    discard: true
+    storage: local-lvm
+    # import_from: /root/jammy-server-cloudimg-amd64.img
+    import_from: /root/jammy-minimal-cloudimg-amd64.img
+    state: present
+  delegate_to: localhost
+  run_once: true
+  register: import_cloudimg
+  delay: 10
+  retries: 6
+  until: not import_cloudimg.failed
+
+- name: set template vm nic0
+  ansible.builtin.command: qm set 100 --net0 "virtio={{ proxmox_template_mac }},bridge=vmbr0"
+  delegate_to: "{{ proxmox_api_host }}"
+  run_once: true
+
+- name: set template vm cloud-init disk
+  ansible.builtin.command: qm set 100 --ide2 local-lvm:cloudinit
+  delegate_to: "{{ proxmox_api_host }}"
+  run_once: true
+  register: _proxmox_set_cloud_init
+  failed_when: not _proxmox_set_cloud_init.rc in [0,5]
+  changed_when: _proxmox_set_cloud_init.rc == 0
+
+- name: configure template vm
+  community.general.proxmox_kvm:
+    api_user: "{{ proxmox_api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    api_host: "{{ proxmox_api_host }}"
+    node: "{{ proxmox_node }}"
+    name: ubuntu2204
+    vmid: 100
+    cores: 1
+    sockets: 1
+    memory: 512
+    net:
+      net0: "virtio={{ proxmox_template_mac }},bridge=vmbr0"
+    scsihw: virtio-scsi-pci
+    scsi:
+      scsi0: local-lvm:vm-100-disk-0,discard
+    vga: serial0
+    serial:
+      serial0: socket
+    boot: c
+    bootdisk: scsi0
+    ide:
+      ide2: local-lvm:cloudinit
+    state: present
+    template: true
+    update: true
+  delegate_to: localhost
+  run_once: true

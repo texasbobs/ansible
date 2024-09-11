@@ -1,0 +1,5 @@
+---
+proxmox_api_user: root@pam
+proxmox_api_password: "{{ lookup('ansible.builtin.env', 'proxmox_password') }}"
+proxmox_api_host: "{{ lookup('ansible.builtin.env', 'proxmox_hostname') }}"
+proxmox_node: "{{ proxmox_api_host }}"

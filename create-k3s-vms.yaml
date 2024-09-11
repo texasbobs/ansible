@@ -1,0 +1,19 @@
+---
+- hosts: localhost
+  tasks:
+  - name: create k3s vms
+    proxmox_kvm:
+      api_user: root@pam
+      api_password: "{{ password }}"
+      api_host: proxmox.local.bobshomelab.org
+      clone: UbuntuTemplate
+      name: "{{ item.name }}"
+      node: pve
+      storage: thin-two-tb
+      format: qcow2
+      timeout: 500
+      newid: "{{ item.id }}"
+    loop:
+      - { name: "k3s-01", id: "241" }
+      - { name: "k3s-02", id: "242" }
+      - { name: "k3s-03", id: "243" }

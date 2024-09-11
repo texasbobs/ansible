@@ -1,0 +1,169 @@
+---
+- name: clone vm, if needed
+  community.general.proxmox_kvm:
+    api_user: "{{ proxmox_api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    api_host: "{{ proxmox_api_host }}"
+    newid: "{{ proxmox.id }}"
+    name: "{{ proxmox.name | default(inventory_hostname) }}"
+    node: "{{ proxmox.node | default(proxmox_node) }}"
+    state: present
+    clone: "{{ proxmox.template | default('ubuntu2204') }}"
+    full: "{{ proxmox.full | default(True) }}"
+    timeout: 360
+  delegate_to: localhost
+  when: >-
+    proxmox is defined
+    and (
+      not proxmox.state is defined
+      or (
+        proxmox.state is defined
+        and proxmox.state in ["present", "started"]
+      )
+    )
+  tags:
+    - proxmox_vm_clone
+
+- name: configure vm
+  community.general.proxmox_kvm:
+    api_user: "{{ proxmox_api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    api_host: "{{ proxmox_api_host }}"
+    vmid: "{{ proxmox.id }}"
+    name: "{{ proxmox.name | default(inventory_hostname) }}"
+    node: "{{ proxmox.node | default(proxmox_node) }}"
+    state: present
+    cpu: "{{ proxmox.cpuType | default('host') }}"
+    cores: "{{ proxmox.cores | default(1) }}"
+    sockets: "{{ proxmox.sockets | default(1) }}"
+    memory: "{{ proxmox.memory | default(512) }}"
+    net:
+      net0: "virtio={{ proxmox.mac }},bridge=vmbr0"
+    ipconfig:
+      ipconfig0: "{{ proxmox.cloudinit.ipconfig }}"
+    ciuser: "{{ proxmox.cloudinit.user }}"
+    cipassword: "{{ proxmox.cloudinit.password }}"
+    nameservers: "{{ proxmox.cloudinit.nameservers }}"
+    sshkeys: "{{ proxmox.cloudinit.sshKeys }}"
+    timeout: 360
+    update: true
+  delegate_to: localhost
+  when: >-
+    proxmox is defined
+    and (
+      not proxmox.state is defined
+      or (
+        proxmox.state is defined
+        and proxmox.state in ["present", "started"]
+      )
+    )
+  tags:
+    - proxmox_vm_configure
+
+- name: resize system disk
+  community.general.proxmox_disk:
+    api_user: "{{ proxmox_api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    api_host: "{{ proxmox_api_host }}"
+    vmid: "{{ proxmox.id }}"
+    name: "{{ proxmox.name | default(inventory_hostname) }}"
+    disk: scsi0
+    size: "{{ proxmox.size }}"
+    state: resized
+  delegate_to: localhost
+  when: >-
+    proxmox is defined
+    and proxmox.size is defined
+    and (
+      not proxmox.state is defined
+      or (
+        proxmox.state is defined
+        and proxmox.state in ["present", "started"]
+      )
+    )
+
+  tags:
+    - proxmox_vm_disk_resize
+
+- name: set vm state
+  community.general.proxmox_kvm:
+    api_user: "{{ proxmox_api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    api_host: "{{ proxmox_api_host }}"
+    node: "{{ proxmox.node | default(proxmox_node) }}"
+    vmid: "{{ proxmox.id }}"
+    name: "{{ proxmox.name | default(inventory_hostname) }}"
+    state: "{{ proxmox.state | default('started') }}"
+    timeout: 360
+    update: true
+    force: true
+  delegate_to: localhost
+  when: proxmox is defined
+  tags:
+    - proxmox_vm_state
+
+- name: get host ssh public key
+  ansible.builtin.command: "ssh-keyscan -Ht ecdsa {{ ansible_ssh_host }}"
+  delegate_to: localhost
+  register: keyscan_raw
+  delay: 5
+  retries: 30
+  until: keyscan_raw.stdout | length | int > 0
+  when: >-
+    proxmox is defined
+    and proxmox.state | default('started') == "started"
+
+- name: ensure /root/.ssh/known_hosts exists
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: "{{ item.state }}"
+    mode: "{{ item.mode }}"
+    owner: root
+    group: root
+  loop:
+    - path: /root
+      state: directory
+      mode: 0o700
+    - path: /root/.ssh
+      state: directory
+      mode: 0o700
+    - path: /root/.ssh/known_hosts
+      state: touch
+      mode: 0o600
+  become: true
+  delegate_to: localhost
+  run_once: true
+
+- name: remove host ssh public key from known_hosts
+  ansible.builtin.known_hosts:
+    host: "{{ ansible_ssh_host }}"
+    state: absent
+  delegate_to: localhost
+  when: >-
+    proxmox is defined
+    and proxmox.state | default('started') == "started"
+
+- name: add host ssh public key to known_hosts
+  ansible.builtin.known_hosts:
+    host: "{{ ansible_ssh_host }}"
+    key: "{{ keyscan_raw.stdout }}"
+    state: present
+  delegate_to: localhost
+  when: >-
+    proxmox is defined
+    and proxmox.state | default('started') == "started"
+
+- name: wait for guest OS to boot up
+  ansible.builtin.wait_for_connection:
+    timeout: 300
+  when: >-
+    proxmox is defined
+    and proxmox.state | default('started') == "started"
+  tags:
+    - proxmox_vm_wait
+
+- name: gather facts
+  ansible.builtin.setup:
+  when: >-
+    proxmox is defined
+    and proxmox.state | default('started') == "started"
