@@ -22,10 +22,11 @@
         state: started
 
     # Optional but harmless: make sure the kernel iSCSI TCP module is present
-    - name: Load iscsi_tcp kernel module (best-effort)
-      shell: "modprobe iscsi_tcp || true"
-      args:
-        warn: false
+    - name: Ensure iscsi_tcp module is present (best-effort)
+      community.general.modprobe:
+        name: iscsi_tcp
+        state: present
+      ignore_errors: true
 
 # Play 2 — Check cluster and bootstrap Flux
 - hosts: localhost
