@@ -1,0 +1,16 @@
+---
+# Default node to operate on
+node: pve2
+
+# List of VMs to delete. Each item may have either `id` (vmid) or `name`.
+# Example:
+# vms:
+#   - { id: 241 }
+#   - { name: "k3s-02" }
+vms: []
+
+# Stop a VM first if it is running
+stop_first: true
+
+# Seconds to wait for stop/delete operations
+pve_timeout: 300
