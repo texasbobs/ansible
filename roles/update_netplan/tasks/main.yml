@@ -1,0 +1,73 @@
+---
+# Runs on the VM over SSH. Expects host vars:
+#   target_ip: "192.168.2.{{ vmid }}"
+#   new_hostname: "{{ name }}"
+# The playbook adds the host with ansible_host=192.168.2.253 and these vars.
+
+- name: Wait for SSH on initial IP
+  wait_for_connection:
+    timeout: 600
+
+- name: Write netplan from template
+  template:
+    src: 01-netcfg.yaml.j2
+    dest: "{{ netplan_path }}"
+    mode: "0644"
+
+- name: Remove any other netplan YAMLs
+  vars:
+    keep: "{{ netplan_path | basename }}"
+  find:
+    paths: /etc/netplan
+    file_type: file
+    patterns:
+      - "*.yaml"
+      - "*.yml"
+  register: np_files
+
+- name: Delete everything except 01-netcfg.yaml
+  become: true
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ np_files.files }}"
+  when: (item.path | basename) != '01-netcfg.yaml'
+
+- name: Set system hostname with hostnamectl
+  command: hostnamectl set-hostname "{{ new_hostname }}"
+
+- name: Ensure /etc/hostname matches
+  copy:
+    dest: /etc/hostname
+    mode: "0644"
+    content: "{{ new_hostname }}\n"
+
+- name: Ensure /etc/hosts has 127.0.1.1 mapping
+  lineinfile:
+    path: /etc/hosts
+    line: "127.0.1.1 {{ new_hostname }}"
+    regexp: "^127\\.0\\.1\\.1\\s+"
+    create: yes
+    state: present
+
+- name: Ensure /etc/hosts has static IP mapping
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ target_ip }} {{ new_hostname }}"
+    regexp: "^{{ target_ip | regex_escape }}\\s+"
+    create: yes
+    state: present
+
+- name: Reboot to settle hostname and networking
+  shell: "sleep 2 && systemctl reboot"
+  async: 1
+  poll: 0
+
+- name: Wait for SSH on the new static IP
+  delegate_to: localhost
+  wait_for:
+    host: "{{ target_ip }}"
+    port: 22
+    delay: 10
+    timeout: 600
+    state: started

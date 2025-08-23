@@ -1,0 +1,76 @@
+---
+# Play 1 — Prep each k3s node for Longhorn
+- hosts: k3s_cluster
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Ensure apt cache is up to date
+      apt:
+        update_cache: yes
+
+    - name: Install iSCSI and NFS clients (required by Longhorn)
+      package:
+        name:
+          - open-iscsi
+          - nfs-common
+        state: present
+
+    - name: Enable and start iscsid
+      service:
+        name: iscsid
+        enabled: yes
+        state: started
+
+    # Optional but harmless: make sure the kernel iSCSI TCP module is present
+    - name: Load iscsi_tcp kernel module (best-effort)
+      shell: "modprobe iscsi_tcp || true"
+      args:
+        warn: false
+
+# Play 2 — Check cluster and bootstrap Flux
+- hosts: localhost
+  gather_facts: false
+  vars_files:
+    - group_vars/all/vault.yaml
+  vars:
+    flux_repo_owner: "texasbobs"
+    flux_repo_name:  "homelab-gitops"
+    flux_repo_branch: "main"
+    flux_path: "clusters/homelab"
+    flux_personal: true
+  tasks:
+    - name: Verify kubectl can reach the cluster
+      command: kubectl get nodes -o name
+      register: kubectl_nodes
+      changed_when: false
+      environment: >-
+        {{ {'KUBECONFIG': kubeconfig_path} if (kubeconfig_path is defined) else {} }}
+
+    - name: Show nodes found
+      debug:
+        var: kubectl_nodes.stdout_lines
+
+    - name: Ensure flux CLI is available
+      command: flux --version
+      register: flux_version
+      changed_when: false
+      failed_when: flux_version.rc != 0
+      environment: >-
+        {{ {'KUBECONFIG': kubeconfig_path} if (kubeconfig_path is defined) else {} }}
+
+    - name: Bootstrap Flux to GitHub
+      no_log: true                   # hides your token and command flags in logs
+      command: >
+        flux bootstrap github
+        --owner={{ flux_repo_owner }}
+        --repository={{ flux_repo_name }}
+        --branch={{ flux_repo_branch }}
+        --path={{ flux_path }}
+        {{ '--personal' if flux_personal else '' }}
+      environment: >-
+        {{
+          dict(
+            GITHUB_TOKEN=github_token
+          )
+          | combine({'KUBECONFIG': kubeconfig_path} if (kubeconfig_path is defined) else {})
+        }}

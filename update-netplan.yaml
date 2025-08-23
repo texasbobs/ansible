@@ -1,0 +1,62 @@
+---
+# Play 1. Define dynamic hosts only. No power on here.
+- hosts: localhost
+  gather_facts: false
+  vars:
+    vm_list:
+      - { name: "k3s-01", id: "241" }
+      - { name: "k3s-02", id: "242" }
+      - { name: "k3s-03", id: "243" }
+      - { name: "k3s-04", id: "244" }
+      - { name: "k3s-05", id: "245" }
+      - { name: "k3s-06", id: "246" }
+      - { name: "k3s-07", id: "247" }
+      - { name: "k3s-08", id: "248" }
+      - { name: "k3s-09", id: "249" }
+      - { name: "k3s-10", id: "250" }
+    vm_ssh_user: "bob"
+    vm_ssh_key: "~/.ssh/id_ed25519"
+
+
+  tasks:
+    - name: Add each VM as a temp host
+      add_host:
+        name: "{{ item.name }}"
+        groups: newvms
+        ansible_host: "192.168.2.253"
+        ansible_user: "{{ vm_ssh_user }}"
+        ansible_ssh_private_key_file: "{{ vm_ssh_key }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        vmid: "{{ item.id }}"
+        target_ip: "192.168.2.{{ item.id }}"
+        new_hostname: "{{ item.name }}"
+      loop: "{{ vm_list }}"
+
+# Play 2. Everything below is truly one-at-a-time.
+- hosts: newvms
+  serial: 1
+  gather_facts: false
+  become: true
+  vars_files:
+    - group_vars/all/vault.yml     # proxmox_host_ip, proxmox_user, proxmox_token_id, proxmox_token_secret
+  pre_tasks:
+    - name: Log power on
+      debug:
+        msg: "Powering on VMID {{ vmid }} ({{ inventory_hostname }})"
+
+    - name: Power on this VM in Proxmox
+      delegate_to: localhost
+      community.general.proxmox_kvm:
+        api_host: "{{ proxmox_host_ip }}"
+        api_port: 8006
+        validate_certs: false
+        api_user: "{{ proxmox_user }}"
+        api_token_id: "{{ proxmox_token_id }}"
+        api_token_secret: "{{ proxmox_token_secret }}"
+        node: pve2
+        vmid: "{{ vmid }}"
+        state: started
+        timeout: 300
+
+  roles:
+    - role: update_netplan   # the role that writes netplan, sets hostname, reboots, waits on new IP
