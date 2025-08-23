@@ -1,0 +1,29 @@
+---
+# roles/patch_ubuntu/tasks/main.yml
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+#    cache_valid_time: "{{ apt_cache_valid_time }}"
+
+- name: Perform dist-upgrade
+  ansible.builtin.apt:
+    upgrade: dist
+
+- name: Autoclean apt cache
+  ansible.builtin.apt:
+    autoclean: yes
+
+- name: Autoremove unused packages
+  ansible.builtin.apt:
+    autoremove: yes
+
+- name: Check if a reboot is required
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: reboot_required
+
+- name: Reboot if updates require it
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+  when: reboot_required.stat.exists

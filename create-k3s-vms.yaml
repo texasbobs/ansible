@@ -1,19 +1,34 @@
 ---
 - hosts: localhost
+  vars_files:
+    - group_vars/all/vault.yml
   tasks:
   - name: create k3s vms
-    proxmox_kvm:
-      api_user: root@pam
-      api_password: "{{ password }}"
-      api_host: proxmox.local.bobshomelab.org
-      clone: UbuntuTemplate
+    community.general.proxmox_kvm:
+      api_token_id: "{{ proxmox_token_id }}"
+      api_token_secret: "{{ proxmox_token_secret }}"
+      api_host: "{{ proxmox_host_ip }}"
+      api_user: "ansible@pam"
+      clone: u24
+      full: true
       name: "{{ item.name }}"
-      node: pve
-      storage: thin-two-tb
-      format: qcow2
+      node: pve2
+      state: present
+      storage: local-lvm
+      target: pve2
       timeout: 500
       newid: "{{ item.id }}"
+      tags: "ubuntu,k3s"
     loop:
       - { name: "k3s-01", id: "241" }
       - { name: "k3s-02", id: "242" }
       - { name: "k3s-03", id: "243" }
+      - { name: "k3s-04", id: "244" }
+      - { name: "k3s-05", id: "245" }
+      - { name: "k3s-06", id: "246" }
+      - { name: "k3s-07", id: "247" }
+      - { name: "k3s-08", id: "248" }
+      - { name: "k3s-09", id: "249" }
+      - { name: "k3s-10", id: "250" }
+#  - name: set netplan to static IPs
+    

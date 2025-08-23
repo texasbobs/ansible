@@ -1,0 +1,44 @@
+---
+# Requires community.general.proxmox_kvm on the control host.
+# Credentials expected in group_vars/all/vault.yml:
+#   proxmox_host_ip, proxmox_user, proxmox_token_id, proxmox_token_secret
+
+- name: "Ensure VM {{ item.name | default(item.id) }} is stopped (if present)"
+  no_log: false
+  community.general.proxmox_kvm:
+    api_host: "{{ proxmox_host_ip }}"
+    api_port: 8006
+    validate_certs: false
+    api_user: "{{ proxmox_user }}"
+    api_token_id: "{{ proxmox_token_id }}"
+    api_token_secret: "{{ proxmox_token_secret }}"
+    node: "{{ node }}"
+    # Select by id if provided, else by name
+    vmid: "{{ item.id | default(omit) }}"
+    name: "{{ item.name | default(omit) }}"
+    state: stopped
+    force: true
+    timeout: "{{ pve_timeout }}"
+  loop: "{{ vms }}"
+  loop_control:
+    label: "{{ item.name | default(item.id) }}"
+  when: stop_first
+  ignore_errors: true   # skip cleanly if VM does not exist or is already gone
+
+- name: "Delete VM {{ item.name | default(item.id) }}"
+  no_log: false
+  community.general.proxmox_kvm:
+    api_host: "{{ proxmox_host_ip }}"
+    api_port: 8006
+    validate_certs: false
+    api_user: "{{ proxmox_user }}"
+    api_token_id: "{{ proxmox_token_id }}"
+    api_token_secret: "{{ proxmox_token_secret }}"
+    node: "{{ node }}"
+    vmid: "{{ item.id | default(omit) }}"
+    name: "{{ item.name | default(omit) }}"
+    state: absent
+    timeout: "{{ pve_timeout }}"
+  loop: "{{ vms }}"
+  loop_control:
+    label: "{{ item.name | default(item.id) }}"

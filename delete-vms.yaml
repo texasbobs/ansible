@@ -1,0 +1,15 @@
+---
+- hosts: localhost
+  gather_facts: false
+  vars_files:
+    - group_vars/all/vault.yml    # holds proxmox_* vars
+  vars:
+    node: pve2
+    vms:
+      - { id: 241 }
+      - { name: "k3s-02" }
+      - { id: 243 }
+  roles:
+    - role: pve_delete_vms
+  serial: 1    # delete one at a time
+

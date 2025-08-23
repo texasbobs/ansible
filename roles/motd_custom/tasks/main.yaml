@@ -1,0 +1,12 @@
+- name: Set deployment date to today's date
+  set_fact:
+    motd_deployed_date: "{{ lookup('pipe', 'date +%F') }}"
+
+- name: Install custom MOTD script
+  template:
+    src: 00-custom.j2
+    dest: /etc/update-motd.d/00-custom
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
