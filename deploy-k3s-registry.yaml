@@ -1,0 +1,48 @@
+---
+- name: Deploy k3s registry configs
+  hosts: all
+  become: true
+
+  vars:
+    k3s_dir: /etc/rancher/k3s
+    k3s_registry_mirrors:
+      - docker.io
+      - registry.k8s.io
+    k3s_registry_wildcard: true
+    k3s_enable_embedded_registry: true
+
+  tasks:
+    - name: Ensure k3s config directory exists
+      ansible.builtin.file:
+        path: "{{ k3s_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write registries.yaml for all nodes
+      ansible.builtin.copy:
+        dest: "{{ k3s_dir }}/registries.yaml"
+        mode: "0644"
+        content: |
+          mirrors:
+          {% for reg in k3s_registry_mirrors %}
+            {{ reg }}:
+          {% endfor %}
+          {% if k3s_registry_wildcard %}
+            "*":
+          {% endif %}
+      notify: Restart k3s service
+
+    - name: Write config.yaml on server nodes only
+      ansible.builtin.copy:
+        dest: "{{ k3s_dir }}/config.yaml"
+        mode: "0644"
+        content: |
+          embedded-registry: {{ 'true' if k3s_enable_embedded_registry else 'false' }}
+      when: "'k3s_server' in group_names"
+      notify: Restart k3s service
+
+  handlers:
+    - name: Restart k3s service
+      ansible.builtin.service:
+        name: "{{ 'k3s' if 'k3s_server' in group_names else 'k3s-agent' }}"
+        state: restarted

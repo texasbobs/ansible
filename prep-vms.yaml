@@ -1,0 +1,51 @@
+---
+- hosts: k3s_cluster
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Ensure apt cache is up to date
+      apt:
+        update_cache: yes
+
+    - name: Install items required by Longhorn
+      package:
+        name:
+          - open-iscsi
+          - nfs-common
+          - cryptsetup-bin
+          - "linux-modules-extra-{{ ansible_kernel }}"
+        state: present
+
+    - name: Enable and start iscsid
+      service:
+        name: iscsid
+        enabled: yes
+        state: started
+
+    - name: Ensure kernel modules loaded now
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - dm_mod
+        - dm_crypt
+        - iscsi_tcp
+        - scsi_transport_iscsi
+
+    - name: Persist kernel modules across reboot
+      copy:
+        dest: /etc/modules-load.d/longhorn.conf
+        content: |
+          dm_mod
+          dm_crypt
+          iscsi_tcp
+          scsi_transport_iscsi
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable and start iscsid
+      systemd:
+        name: iscsid
+        enabled: yes
+        state: started

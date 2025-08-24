@@ -1,0 +1,48 @@
+---
+- name: Create GPT and partition if missing
+  community.general.parted:
+    device: "{{ longhorn_device }}"
+    label: gpt
+    number: 1
+    state: present
+    part_start: 1MiB
+    part_end: 100%
+  register: parted_result
+
+- name: Make filesystem if missing
+  filesystem:
+    fstype: "{{ longhorn_fstype }}"
+    dev: "{{ longhorn_device }}1"
+    opts: "{{ ' -m reflink=1' if longhorn_fstype == 'xfs' else omit }}"
+  when: parted_result is changed
+
+- name: Create mountpoint
+  file:
+    path: "{{ longhorn_mount }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Get partition UUID
+  command: blkid -s UUID -o value "{{ longhorn_device }}1"
+  register: uuid
+  changed_when: false
+
+- name: Ensure fstab entry present
+  mount:
+    path: "{{ longhorn_mount }}"
+    src: "UUID={{ uuid.stdout }}"
+    fstype: "{{ longhorn_fstype }}"
+    opts: "{{ longhorn_mount_opts }}"
+    state: present
+
+- name: Mount now (must be executable)
+  mount:
+    path: "{{ longhorn_mount }}"
+    src: "UUID={{ uuid.stdout }}"
+    fstype: "{{ longhorn_fstype }}"
+    opts: "{{ longhorn_mount_opts }},exec"
+    state: mounted
+  register: mount_changed
+  notify: Restart engine-image pods

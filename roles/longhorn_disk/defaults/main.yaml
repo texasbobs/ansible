@@ -1,0 +1,5 @@
+---
+longhorn_device: /dev/sdb
+longhorn_mount: /var/lib/longhorn
+longhorn_fstype: xfs
+longhorn_mount_opts: "defaults,noatime"

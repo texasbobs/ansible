@@ -1,0 +1,7 @@
+---
+# If the disk was (re)mounted after Longhorn install, the engine
+# binaries may be hidden. Force the engine-image pods to reinstall.
+- name: Restart engine-image pods
+  shell: |
+    kubectl -n longhorn-system delete pod -l longhorn.io/component=engine-image --ignore-not-found
+  changed_when: true

@@ -1,0 +1,92 @@
+---
+# register-longhorn-disks-kubectl.yaml
+# Prereqs on control host: kubectl + working kubeconfig/context
+
+- hosts: localhost
+  gather_facts: false
+  vars:
+    kubeconfig: /home/bob/.kube/config
+    longhorn_namespace: longhorn-system
+    longhorn_device: /dev/sdb                 # consider a by-id path for stability
+    longhorn_disk_tag: longhorn-extra
+
+    # The SAME node names that should get the Longhorn disk
+    nodes_with_disk:
+      - k3s-01
+      - k3s-02
+      - k3s-03
+      - k3s-04
+      - k3s-05
+
+  tasks:
+    - name: Check if Longhorn Node CRD exists
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig
+          - "{{ kubeconfig }}"
+          - get
+          - crd
+          - nodes.longhorn.io
+          - -o
+          - name
+      register: crd_check
+      changed_when: false
+      failed_when: crd_check.rc != 0
+
+    - name: Build merge patch JSON for Longhorn disk
+      ansible.builtin.set_fact:
+        longhorn_patch: >-
+          {{
+            {
+              "spec": {
+                "disks": {
+                  "sdb": {
+                    "path": longhorn_device,
+                    "type": "block",
+                    "allowScheduling": True,
+                    "evictionRequested": False,
+                    "tags": [ longhorn_disk_tag ]
+                  }
+                }
+              }
+            }
+          }}
+
+    - name: Register /dev/sdb with tag on each Longhorn node
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig
+          - "{{ kubeconfig }}"
+          - -n
+          - "{{ longhorn_namespace }}"
+          - patch
+          - nodes.longhorn.io
+          - "{{ item }}"
+          - --type=merge
+          - -p
+          - "{{ longhorn_patch | to_json }}"
+      loop: "{{ nodes_with_disk }}"
+
+    - name: Show resulting disk spec per node
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig
+          - "{{ kubeconfig }}"
+          - -n
+          - "{{ longhorn_namespace }}"
+          - get
+          - nodes.longhorn.io
+          - "{{ item }}"
+          - -o
+          - jsonpath={.spec.disks}
+      loop: "{{ nodes_with_disk }}"
+      register: disk_specs
+      changed_when: false
+
+    - name: Pretty print results
+      ansible.builtin.debug:
+        msg: "{{ item.item }} -> {{ item.stdout }}"
+      loop: "{{ disk_specs.results }}"
