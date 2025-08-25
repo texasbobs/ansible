@@ -1,0 +1,4 @@
+convert the creation platybooks to roles
+write a new playbook to run all of them
+have the list of VMs for the cluster be defined as a single var instead of in each playbook
+download the binary for k3s once and save it on the local host. then scp it to each node.

@@ -18,7 +18,7 @@
       target: pve2
       timeout: 500
       newid: "{{ item.id }}"
-      tags: ["ubuntu,k3s"]
+      tags: ['ubuntu', 'k3s']
       sockets: 1
       cores: 8
       memory: 16384

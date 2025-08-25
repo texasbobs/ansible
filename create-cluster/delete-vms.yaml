@@ -7,9 +7,16 @@
     node: pve2
     vms:
       - { id: 241 }
-      - { name: "k3s-02" }
+      - { id: 242 }
       - { id: 243 }
+      - { id: 244 }
+      - { id: 245 }
+      - { id: 246 }
+      - { id: 247 }
+      - { id: 248 }
+      - { id: 249 }
+      - { id: 250 }
   roles:
     - role: pve_delete_vms
-  serial: 1    # delete one at a time
+#  serial: 1    # delete one at a time
 

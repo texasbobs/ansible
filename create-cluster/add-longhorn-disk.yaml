@@ -1,0 +1,141 @@
+# add-longhorn-disk.yaml
+---
+# PLAY 1: Prepare the Longhorn disk and mount it at /var/lib/longhorn on storage nodes
+- name: Prepare Longhorn disks on storage nodes
+  hosts: longhorn_storage            # <-- inventory group with your 5 storage nodes
+  become: true
+  vars:
+    longhorn_device: /dev/sdb
+    longhorn_mountpoint: /var/lib/longhorn
+    longhorn_fstype: xfs
+    longhorn_mount_opts: "defaults,noatime,exec"   # Longhorn needs exec
+    wipe_longhorn_disk: false        # set true only on brand-new nodes
+  tasks:
+    - name: Ensure required packages are present
+      package:
+        name:
+          - open-iscsi
+          - cryptsetup
+          - cloud-guest-utils      # growpart; handy if you later expand disks
+        state: present
+
+    - name: Ensure kernel modules are persisted
+      copy:
+        dest: /etc/modules-load.d/longhorn.conf
+        content: |
+          dm_crypt
+          iscsi_tcp
+          scsi_transport_iscsi
+
+    - name: Load kernel modules now
+      shell: |
+        for m in dm_crypt iscsi_tcp scsi_transport_iscsi; do
+          /sbin/modprobe "$m" || true
+        done
+
+    - name: Create GPT and full-disk partition (no-op if present)
+      community.general.parted:
+        device: "{{ longhorn_device }}"
+        label: gpt
+        number: 1
+        state: present
+        part_end: 100%
+
+    - name: Detect existing filesystem on {{ longhorn_device }}1
+      command: blkid -o value -s TYPE {{ longhorn_device }}1
+      register: fs_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Create filesystem on {{ longhorn_device }}1 (safe unless wipe=true)
+      filesystem:
+        fstype: "{{ longhorn_fstype }}"
+        dev: "{{ longhorn_device }}1"
+        force: "{{ wipe_longhorn_disk | bool }}"
+      when: fs_probe.stdout == "" or (wipe_longhorn_disk | bool)
+
+    - name: Ensure mountpoint exists
+      file:
+        path: "{{ longhorn_mountpoint }}"
+        state: directory
+        mode: "0755"
+
+    - name: Mount {{ longhorn_device }}1 at {{ longhorn_mountpoint }} (persist in fstab)
+      ansible.posix.mount:
+        path: "{{ longhorn_mountpoint }}"
+        src: "{{ longhorn_device }}1"
+        fstype: "{{ longhorn_fstype }}"
+        opts: "{{ longhorn_mount_opts }}"
+        state: mounted
+    - name: Read current mount options
+      command: findmnt -no OPTIONS {{ longhorn_mountpoint }}
+      register: mount_opts_line
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure fstab has desired options (defaults,noatime,exec)
+      ansible.posix.mount:
+        path: "{{ longhorn_mountpoint }}"
+        src: "{{ longhorn_device }}1"
+        fstype: "{{ longhorn_fstype }}"
+        opts: "{{ longhorn_mount_opts }}"   # defaults,noatime,exec
+        state: present
+
+    - name: Remount with desired options if needed
+      ansible.posix.mount:
+        path: "{{ longhorn_mountpoint }}"
+        src: "{{ longhorn_device }}1"
+        fstype: "{{ longhorn_fstype }}"
+        opts: "{{ longhorn_mount_opts }}"
+        state: remounted
+      when: mount_opts_line.stdout is defined and 'noexec' in mount_opts_line.stdout
+
+# PLAY 2: Label & annotate K8s nodes for Longhorn default disk
+- name: Label & annotate K8s nodes for Longhorn default disk
+  hosts: longhorn_storage
+  gather_facts: true     # we use ansible_hostname as the default node name
+  vars:
+    k8s_api_node: "{{ groups['server'] | first }}"   # run kubectl on the first k3s server
+    kubeconfig_on_server: /etc/rancher/k3s/k3s.yaml
+    longhorn_mountpoint: /var/lib/longhorn
+    longhorn_disk_tag: longhorn-extra
+    default_disks_config_obj:
+      - name: data
+        path: "{{ longhorn_mountpoint }}"
+        allowScheduling: true
+        storageReserved: 0
+        tags: ["{{ longhorn_disk_tag }}"]
+    default_disks_config_str: "{{ default_disks_config_obj | to_json }}"
+
+  tasks:
+    - name: Label node to auto-create default disk
+      run_once: true
+      delegate_to: "{{ k8s_api_node }}"
+      become: true
+      loop: "{{ groups['longhorn_storage'] }}"
+      loop_control:
+        loop_var: h
+      command: >
+        kubectl
+        --kubeconfig={{ kubeconfig_on_server }}
+        label node {{ hostvars[h].k8s_node_name | default(hostvars[h].ansible_hostname) }}
+        node.longhorn.io/create-default-disk=true
+        --overwrite
+
+    - name: Annotate node with default-disks-config (JSON string)
+      run_once: true
+      delegate_to: "{{ k8s_api_node }}"
+      become: true
+      loop: "{{ groups['longhorn_storage'] }}"
+      loop_control:
+        loop_var: h
+      args:
+        argv:
+          - kubectl
+          - "--kubeconfig={{ kubeconfig_on_server }}"
+          - annotate
+          - node
+          - "{{ hostvars[h].k8s_node_name | default(hostvars[h].ansible_hostname) }}"
+          - "node.longhorn.io/default-disks-config={{ default_disks_config_str }}"
+          - --overwrite
+      command: ""   # required by Ansible syntax when using args.argv

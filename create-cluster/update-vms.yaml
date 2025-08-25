@@ -2,7 +2,7 @@
 - hosts: localhost
   gather_facts: false
   vars_files:
-    - group_vars/all/vault.yaml
+    - ../group_vars/all/vault.yaml
   vars:
     vm_list:
       - { name: "k3s-01", id: "241" }
